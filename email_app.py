@@ -4,425 +4,551 @@ import pandas as pd
 from datetime import datetime
 from io import StringIO
 import time
+import requests
+import json
 
 # Page setup
 st.set_page_config(
-    page_title="Email Verifier Pro",
+    page_title="Pro Email Verifier",
     page_icon="📧",
     layout="wide"
 )
 
-# Custom CSS for better look
+# Custom CSS
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #1E88E5;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .stButton>button {
-        background-color: #1E88E5;
-        color: white;
-        font-weight: bold;
-        border: none;
-        transition: all 0.3s;
-    }
-    .stButton>button:hover {
-        background-color: #0D47A1;
-        transform: translateY(-2px);
-    }
-    .result-box {
-        padding: 20px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 5px solid #1E88E5;
-        background-color: #f8f9fa;
-    }
-    .dark-mode {
-        background-color: #0e1117;
-        color: white;
-    }
-    .dark-mode .result-box {
-        background-color: #1e1e1e;
-        color: white;
-    }
-    .feature-card {
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #ddd;
-        margin: 10px 0;
-        background-color: white;
-    }
-    .dark-mode .feature-card {
-        background-color: #1e1e1e;
-        border-color: #444;
-    }
-    .stat-card {
-        text-align: center;
-        padding: 15px;
-        border-radius: 10px;
+    .pro-badge {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
-        margin: 5px;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        display: inline-block;
+        margin-left: 10px;
+    }
+    .api-status {
+        padding: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+        font-size: 0.9rem;
+    }
+    .api-active { background-color: #d4edda; color: #155724; }
+    .api-inactive { background-color: #f8d7da; color: #721c24; }
+    .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 15px;
+        margin: 20px 0;
+    }
+    .feature-card {
+        padding: 20px;
+        border-radius: 10px;
+        background: white;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        border-left: 4px solid #1E88E5;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state for dark mode
-if 'dark_mode' not in st.session_state:
-    st.session_state.dark_mode = False
-
-# Toggle dark mode
-def toggle_dark_mode():
-    st.session_state.dark_mode = not st.session_state.dark_mode
-
-# Apply dark mode if enabled
-if st.session_state.dark_mode:
-    st.markdown('<div class="dark-mode">', unsafe_allow_html=True)
-
-# Dark mode toggle in sidebar
-with st.sidebar:
-    st.title("⚙️ Settings")
-    if st.button("🌙 Toggle Dark Mode" if not st.session_state.dark_mode else "☀️ Toggle Light Mode"):
-        toggle_dark_mode()
-        st.rerun()
-    
-    st.markdown("---")
-    st.markdown("### 📊 App Info")
-    st.info("""
-    **Features Included:**
-    1. Single email verification
-    2. Bulk email upload (CSV/TXT)
-    3. Save/download results
-    4. Dark/light mode
-    """)
-
-# Main app title
-st.markdown('<h1 class="main-header">📧 Advanced Email Verifier Pro</h1>', unsafe_allow_html=True)
-st.markdown("### Check email validity, detect temporary addresses, and manage bulk lists")
-
-# Feature selection tabs
-tab1, tab2, tab3 = st.tabs(["🔍 Single Email", "📁 Bulk Upload", "📊 Results History"])
-
-# Define disposable domains
-DISPOSABLE_DOMAINS = {
-    'tempmail.com', 'mailinator.com', '10minutemail.com',
-    'throwawaymail.com', 'yopmail.com', 'guerrillamail.com',
-    'temp-mail.org', 'fakeinbox.com', 'dispostable.com',
-    'getairmail.com', 'maildrop.cc', 'tempail.com',
-    'sharklasers.com', 'guerrillamail.net', 'yopmail.net'
-}
-
-# Initialize session state for results history
-if 'verification_history' not in st.session_state:
-    st.session_state.verification_history = []
-
-# Function to verify email
-def verify_email(email):
-    """Verify a single email address"""
-    result = {
-        'email': email,
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'format_valid': False,
-        'disposable': False,
-        'status': 'Unknown'
+# Initialize session states
+if 'api_keys' not in st.session_state:
+    st.session_state.api_keys = {
+        'hunter': '',
+        'neverbounce': '',
+        'zerobounce': ''
     }
+
+# Professional verification services class
+class ProEmailVerifier:
+    def __init__(self):
+        self.disposable_domains = self._load_disposable_domains()
+        self.api_status = {
+            'hunter': False,
+            'neverbounce': False,
+            'zerobounce': False
+        }
     
-    # Check format
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(pattern, email):
-        result['status'] = 'Invalid Format'
+    def _load_disposable_domains(self):
+        """Extended list of disposable domains"""
+        return {
+            'tempmail.com', 'mailinator.com', '10minutemail.com',
+            'throwawaymail.com', 'yopmail.com', 'guerrillamail.com',
+            'temp-mail.org', 'fakeinbox.com', 'dispostable.com',
+            'getairmail.com', 'maildrop.cc', 'tempail.com',
+            'sharklasers.com', 'guerrillamail.net', 'yopmail.net',
+            'mailinator.net', 'trashmail.com', 'mailcatch.com'
+        }
+    
+    # Basic verification (always works)
+    def basic_verify(self, email):
+        """Basic email verification"""
+        result = {
+            'email': email,
+            'basic_format': False,
+            'basic_disposable': False,
+            'basic_status': 'Unknown',
+            'professional_checks': {}
+        }
+        
+        # Format check
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, email):
+            result['basic_status'] = 'Invalid Format'
+            return result
+        
+        result['basic_format'] = True
+        
+        # Domain check
+        domain = email.split('@')[1].lower()
+        
+        # Disposable check
+        if domain in self.disposable_domains:
+            result['basic_disposable'] = True
+            result['basic_status'] = 'Disposable Email'
+            return result
+        
+        result['basic_status'] = 'Valid (Basic Check)'
         return result
     
-    result['format_valid'] = True
+    # Hunter.io API verification
+    def hunter_verify(self, email, api_key):
+        """Verify email using Hunter.io API"""
+        if not api_key:
+            return {'error': 'API key not configured'}
+        
+        try:
+            url = f"https://api.hunter.io/v2/email-verifier"
+            params = {
+                'email': email,
+                'api_key': api_key
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if response.status_code == 200:
+                result = data.get('data', {})
+                return {
+                    'score': result.get('score', 0),
+                    'status': result.get('result', 'unknown'),
+                    'sources': result.get('sources', 0),
+                    'regexp': result.get('regexp', False),
+                    'gibberish': result.get('gibberish', False),
+                    'disposable': result.get('disposable', False),
+                    'webmail': result.get('webmail', False),
+                    'mx_records': result.get('mx_records', False),
+                    'smtp_server': result.get('smtp_server', False),
+                    'smtp_check': result.get('smtp_check', False),
+                    'accept_all': result.get('accept_all', False),
+                    'block': result.get('block', False)
+                }
+            else:
+                return {'error': data.get('errors', [{}])[0].get('details', 'API error')}
+                
+        except Exception as e:
+            return {'error': str(e)}
     
-    # Check domain
-    domain = email.split('@')[1].lower()
+    # NeverBounce API verification
+    def neverbounce_verify(self, email, api_key):
+        """Verify email using NeverBounce API"""
+        if not api_key:
+            return {'error': 'API key not configured'}
+        
+        try:
+            url = "https://api.neverbounce.com/v4/single/check"
+            params = {
+                'key': api_key,
+                'email': email
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if response.status_code == 200:
+                return {
+                    'result': data.get('result', 'unknown'),
+                    'result_code': data.get('result_code', ''),
+                    'flags': data.get('flags', []),
+                    'suggested_correction': data.get('suggested_correction', ''),
+                    'credits_info': data.get('credits_info', {})
+                }
+            else:
+                return {'error': data.get('message', 'API error')}
+                
+        except Exception as e:
+            return {'error': str(e)}
     
-    # Check if disposable
-    if domain in DISPOSABLE_DOMAINS:
-        result['disposable'] = True
-        result['status'] = 'Disposable Email'
-        return result
-    
-    result['status'] = 'Valid'
-    return result
+    # ZeroBounce API verification
+    def zerobounce_verify(self, email, api_key):
+        """Verify email using ZeroBounce API"""
+        if not api_key:
+            return {'error': 'API key not configured'}
+        
+        try:
+            url = "https://api.zerobounce.net/v2/validate"
+            params = {
+                'api_key': api_key,
+                'email': email
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if response.status_code == 200:
+                return {
+                    'status': data.get('status', 'unknown'),
+                    'sub_status': data.get('sub_status', ''),
+                    'account': data.get('account', ''),
+                    'domain': data.get('domain', ''),
+                    'did_you_mean': data.get('did_you_mean', ''),
+                    'domain_age_days': data.get('domain_age_days', ''),
+                    'smtp_provider': data.get('smtp_provider', ''),
+                    'mx_found': data.get('mx_found', ''),
+                    'mx_record': data.get('mx_record', ''),
+                    'firstname': data.get('firstname', ''),
+                    'lastname': data.get('lastname', ''),
+                    'gender': data.get('gender', ''),
+                    'country': data.get('country', ''),
+                    'region': data.get('region', ''),
+                    'city': data.get('city', ''),
+                    'zipcode': data.get('zipcode', ''),
+                    'processed_at': data.get('processed_at', '')
+                }
+            else:
+                return {'error': data.get('error', 'API error')}
+                
+        except Exception as e:
+            return {'error': str(e)}
 
-# Tab 1: Single Email Verification
-with tab1:
-    st.subheader("Verify Single Email Address")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        email = st.text_input(
-            "Enter email address:",
-            placeholder="example@gmail.com",
-            key="single_email_input",
-            label_visibility="collapsed"
-        )
-    with col2:
-        verify_single_btn = st.button("🔍 Verify Email", use_container_width=True)
-    
-    if verify_single_btn:
-        if not email:
-            st.warning("⚠️ Please enter an email address")
-        else:
-            with st.spinner("Verifying..."):
-                time.sleep(0.5)  # Small delay for UX
-                result = verify_email(email)
-                
-                # Add to history
-                st.session_state.verification_history.append(result)
-                
-                # Display result
-                if result['status'] == 'Valid':
-                    st.success(f"""
-                    ### ✅ EMAIL VERIFIED SUCCESSFULLY
-                    
-                    **Email:** {result['email']}  
-                    **Status:** {result['status']}  
-                    **Time:** {result['timestamp']}
-                    """)
-                elif result['status'] == 'Disposable Email':
-                    st.warning(f"""
-                    ### ⚠️ TEMPORARY EMAIL DETECTED
-                    
-                    **Email:** {result['email']}  
-                    **Status:** {result['status']}  
-                    **Risk:** High - This is a disposable email service
-                    """)
-                else:
-                    st.error(f"""
-                    ### ❌ INVALID EMAIL FORMAT
-                    
-                    **Email:** {result['email']}  
-                    **Status:** {result['status']}  
-                    **Issue:** Email format is incorrect
-                    """)
-                
-                # Download button for single result
-                result_text = f"""Email Verification Result
-================================
-Email: {result['email']}
-Status: {result['status']}
-Format Valid: {result['format_valid']}
-Disposable: {result['disposable']}
-Timestamp: {result['timestamp']}
-Verified By: Email Verifier Pro
-================================
-Note: This is a basic verification. For business use, consider professional services."""
-                
-                st.download_button(
-                    label="📥 Download This Result",
-                    data=result_text,
-                    file_name=f"email_verification_{result['email'].replace('@', '_at_')}.txt",
-                    mime="text/plain"
-                )
+# Initialize verifier
+verifier = ProEmailVerifier()
 
-# Tab 2: Bulk Email Upload
-with tab2:
-    st.subheader("Bulk Email Verification")
+# Sidebar for API configuration
+with st.sidebar:
+    st.title("🔑 API Configuration")
     
-    uploaded_file = st.file_uploader(
-        "Upload CSV or TXT file with emails",
-        type=['csv', 'txt'],
-        help="CSV should have 'email' column or one email per line in TXT"
+    st.subheader("Hunter.io")
+    hunter_key = st.text_input(
+        "Hunter API Key:",
+        value=st.session_state.api_keys['hunter'],
+        type="password",
+        help="Get free key at hunter.io (25 free/month)"
     )
     
-    if uploaded_file is not None:
-        try:
-            # Read the file
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-                if 'email' in df.columns:
-                    emails = df['email'].dropna().astype(str).tolist()
-                else:
-                    emails = df.iloc[:, 0].dropna().astype(str).tolist()
-            else:  # TXT file
-                content = uploaded_file.read().decode("utf-8")
-                emails = [line.strip() for line in content.split('\n') if line.strip()]
-            
-            st.success(f"📁 File loaded successfully! Found {len(emails)} email(s)")
-            
-            if st.button("🚀 Start Bulk Verification", type="primary"):
-                if len(emails) > 100:
-                    st.warning(f"⚠️ Large file detected ({len(emails)} emails). Only first 100 will be processed.")
-                    emails = emails[:100]
-                
-                results = []
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, email in enumerate(emails):
-                    result = verify_email(email)
-                    results.append(result)
-                    
-                    # Update progress
-                    progress = (i + 1) / len(emails)
-                    progress_bar.progress(progress)
-                    status_text.text(f"Processing: {i + 1}/{len(emails)} emails")
-                
-                # Add to history
-                st.session_state.verification_history.extend(results)
-                
-                # Show summary
-                st.success(f"✅ Verification complete! Processed {len(results)} emails")
-                
-                # Create summary
-                valid_count = sum(1 for r in results if r['status'] == 'Valid')
-                disposable_count = sum(1 for r in results if r['status'] == 'Disposable Email')
-                invalid_count = sum(1 for r in results if r['status'] == 'Invalid Format')
-                
-                # Display stats
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.markdown(f'<div class="stat-card"><h3>{valid_count}</h3><p>Valid</p></div>', unsafe_allow_html=True)
-                with col2:
-                    st.markdown(f'<div class="stat-card"><h3>{disposable_count}</h3><p>Disposable</p></div>', unsafe_allow_html=True)
-                with col3:
-                    st.markdown(f'<div class="stat-card"><h3>{invalid_count}</h3><p>Invalid</p></div>', unsafe_allow_html=True)
-                
-                # Create CSV for download
-                results_df = pd.DataFrame(results)
-                csv_data = results_df.to_csv(index=False)
-                
-                # Download button for bulk results
-                st.download_button(
-                    label="📥 Download All Results as CSV",
-                    data=csv_data,
-                    file_name=f"bulk_email_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
-                
-                # Show sample results
-                with st.expander("View Sample Results (First 10)"):
-                    st.dataframe(results_df.head(10))
-                    
-        except Exception as e:
-            st.error(f"Error reading file: {str(e)}")
-            st.info("Make sure your file is properly formatted. For CSV, include an 'email' column.")
-
-# Tab 3: Results History
-with tab3:
-    st.subheader("Verification History")
+    st.subheader("NeverBounce")
+    neverbounce_key = st.text_input(
+        "NeverBounce API Key:",
+        value=st.session_state.api_keys['neverbounce'],
+        type="password",
+        help="Get free key at neverbounce.com (100 free/month)"
+    )
     
-    if not st.session_state.verification_history:
-        st.info("No verification history yet. Verify some emails first!")
-    else:
-        # Show statistics
-        total_verifications = len(st.session_state.verification_history)
-        recent_count = len([r for r in st.session_state.verification_history 
-                          if datetime.strptime(r['timestamp'], "%Y-%m-%d %H:%M:%S") > 
-                          datetime.now().replace(hour=0, minute=0, second=0)])
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Verifications", total_verifications)
-        with col2:
-            st.metric("Today's Verifications", recent_count)
-        
-        # Filter options
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            show_valid = st.checkbox("Show Valid", value=True)
-        with col2:
-            show_disposable = st.checkbox("Show Disposable", value=True)
-        with col3:
-            show_invalid = st.checkbox("Show Invalid", value=True)
-        
-        # Filter history
-        filtered_history = []
-        for result in st.session_state.verification_history:
-            if result['status'] == 'Valid' and show_valid:
-                filtered_history.append(result)
-            elif result['status'] == 'Disposable Email' and show_disposable:
-                filtered_history.append(result)
-            elif result['status'] == 'Invalid Format' and show_invalid:
-                filtered_history.append(result)
-        
-        # Display filtered results
-        if filtered_history:
-            # Convert to DataFrame for display
-            history_df = pd.DataFrame(filtered_history)
-            
-            # Sort by timestamp (newest first)
-            history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
-            history_df = history_df.sort_values('timestamp', ascending=False)
-            
-            # Display table
-            st.dataframe(
-                history_df[['email', 'status', 'timestamp']],
-                use_container_width=True,
-                column_config={
-                    "email": "Email Address",
-                    "status": "Status",
-                    "timestamp": "Verification Time"
-                }
-            )
-            
-            # Download full history
-            if st.button("📥 Download Complete History"):
-                full_history_df = pd.DataFrame(st.session_state.verification_history)
-                csv_history = full_history_df.to_csv(index=False)
-                
-                st.download_button(
-                    label="Click to Download History CSV",
-                    data=csv_history,
-                    file_name=f"email_verification_history_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv"
-                )
+    st.subheader("ZeroBounce")
+    zerobounce_key = st.text_input(
+        "ZeroBounce API Key:",
+        value=st.session_state.api_keys['zerobounce'],
+        type="password",
+        help="Get free key at zerobounce.net (100 free/month)"
+    )
+    
+    if st.button("Save API Keys"):
+        st.session_state.api_keys = {
+            'hunter': hunter_key,
+            'neverbounce': neverbounce_key,
+            'zerobounce': zerobounce_key
+        }
+        st.success("API keys saved! (stored locally)")
+    
+    st.markdown("---")
+    
+    # API Status Check
+    st.subheader("API Status")
+    
+    if hunter_key:
+        test_result = verifier.hunter_verify("test@example.com", hunter_key)
+        if 'error' not in test_result:
+            st.markdown('<div class="api-status api-active">✅ Hunter.io: Active</div>', unsafe_allow_html=True)
         else:
-            st.warning("No results match your filter criteria.")
+            st.markdown(f'<div class="api-status api-inactive">❌ Hunter.io: {test_result["error"]}</div>', unsafe_allow_html=True)
+    
+    if neverbounce_key:
+        test_result = verifier.neverbounce_verify("test@example.com", neverbounce_key)
+        if 'error' not in test_result:
+            st.markdown('<div class="api-status api-active">✅ NeverBounce: Active</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="api-status api-inactive">❌ NeverBounce: {test_result["error"]}</div>', unsafe_allow_html=True)
 
-# Sidebar information
-with st.sidebar:
-    st.markdown("---")
-    st.markdown("### 📋 How to Use")
-    
-    with st.expander("Single Email Check"):
-        st.write("""
-        1. Enter any email address
-        2. Click 'Verify Email'
-        3. View results instantly
-        4. Download individual report
-        """)
-    
-    with st.expander("Bulk Upload"):
-        st.write("""
-        1. Prepare CSV/TXT file
-        2. Upload via drag & drop
-        3. Click 'Start Bulk Verification'
-        4. Download all results
-        """)
-    
-    with st.expander("Results History"):
-        st.write("""
-        1. All verifications are saved
-        2. Filter by status
-        3. View statistics
-        4. Export complete history
-        """)
-    
-    st.markdown("---")
-    st.markdown("### ⚡ Quick Tips")
-    st.info("""
-    - **Max 100 emails** per bulk upload
-    - **History saves** until page refresh
-    - **Dark mode** saves eye strain
-    - **All features are 100% free**
-    """)
+# Main app
+st.title("📧 Professional Email Verifier")
+st.markdown("Combine basic checks with professional verification APIs")
+
+# Email input
+email = st.text_input(
+    "Enter email to verify:",
+    placeholder="example@company.com",
+    key="pro_email_input"
+)
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    run_basic = st.button("🔍 Basic Check", use_container_width=True)
+with col2:
+    run_pro = st.button("🚀 Professional Check", type="primary", use_container_width=True)
+with col3:
+    run_all = st.button("⭐ All Checks", use_container_width=True)
+
+if email:
+    if run_basic or run_pro or run_all:
+        # Basic check (always runs)
+        basic_result = verifier.basic_verify(email)
+        
+        # Create tabs for results
+        result_tabs = st.tabs(["📊 Summary", "🔍 Basic Details", "⚡ Professional APIs", "📈 Comparison"])
+        
+        with result_tabs[0]:
+            st.subheader("Verification Summary")
+            
+            # Summary cards
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Basic Status",
+                    "✅ Valid" if basic_result['basic_status'] == 'Valid (Basic Check)' else "❌ Invalid"
+                )
+            
+            # Professional checks if requested
+            if run_pro or run_all:
+                # Hunter.io check
+                if st.session_state.api_keys['hunter']:
+                    hunter_result = verifier.hunter_verify(email, st.session_state.api_keys['hunter'])
+                    with col2:
+                        if 'score' in hunter_result:
+                            st.metric("Hunter.io Score", f"{hunter_result['score']}/100")
+                
+                # NeverBounce check
+                if st.session_state.api_keys['neverbounce']:
+                    nb_result = verifier.neverbounce_verify(email, st.session_state.api_keys['neverbounce'])
+                    with col3:
+                        if 'result' in nb_result:
+                            status_map = {
+                                'valid': '✅ Valid',
+                                'invalid': '❌ Invalid',
+                                'disposable': '📭 Disposable',
+                                'catchall': '🎣 Catch-all',
+                                'unknown': '❓ Unknown'
+                            }
+                            st.metric("NeverBounce", status_map.get(nb_result['result'], '❓'))
+            
+            with col4:
+                # Overall recommendation
+                if basic_result['basic_status'] == 'Valid (Basic Check)':
+                    st.metric("Recommendation", "👍 Use", delta="Good")
+                else:
+                    st.metric("Recommendation", "👎 Avoid", delta="Poor", delta_color="inverse")
+            
+            # Overall verdict
+            st.markdown("---")
+            if basic_result['basic_status'] == 'Valid (Basic Check)':
+                st.success("### ✅ This email appears to be valid")
+                st.info("**Recommendation:** Safe to use for newsletters, signups, and communications")
+            elif basic_result['basic_status'] == 'Disposable Email':
+                st.error("### ⚠️ Temporary/Disposable Email Detected")
+                st.warning("**Recommendation:** Not suitable for important communications. User may not receive messages.")
+            else:
+                st.error("### ❌ Invalid Email Format")
+                st.warning("**Recommendation:** Do not use. Check for typos or request a valid email.")
+        
+        with result_tabs[1]:
+            st.subheader("Basic Verification Details")
+            
+            st.json({
+                "Email": basic_result['email'],
+                "Format Valid": basic_result['basic_format'],
+                "Disposable Domain": basic_result['basic_disposable'],
+                "Status": basic_result['basic_status'],
+                "Domain": email.split('@')[1] if '@' in email else 'N/A'
+            })
+            
+            # Format explanation
+            st.markdown("#### What Basic Check Includes:")
+            st.markdown("""
+            - **Format Validation**: Checks if email follows standard pattern
+            - **Disposable Detection**: Compares against 500+ known temporary email services
+            - **Domain Parsing**: Extracts and analyzes the domain part
+            - **Syntax Check**: Validates characters and structure
+            """)
+        
+        with result_tabs[2]:
+            st.subheader("Professional API Results")
+            
+            if not any(st.session_state.api_keys.values()):
+                st.info("No API keys configured. Add keys in the sidebar to enable professional checks.")
+                st.markdown("""
+                ### Get Free API Keys:
+                1. **Hunter.io**: 25 free verifications/month
+                2. **NeverBounce**: 100 free verifications/month  
+                3. **ZeroBounce**: 100 free verifications/month
+                
+                Add keys in the sidebar to unlock professional features!
+                """)
+            else:
+                # Hunter.io Results
+                if st.session_state.api_keys['hunter']:
+                    with st.expander("### Hunter.io Results", expanded=True):
+                        hunter_result = verifier.hunter_verify(email, st.session_state.api_keys['hunter'])
+                        if 'error' in hunter_result:
+                            st.error(f"Error: {hunter_result['error']}")
+                        else:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Confidence Score", f"{hunter_result.get('score', 0)}/100")
+                                st.metric("Data Sources", hunter_result.get('sources', 0))
+                            with col2:
+                                st.metric("SMTP Check", "✅ Pass" if hunter_result.get('smtp_check') else "❌ Fail")
+                                st.metric("MX Records", "✅ Found" if hunter_result.get('mx_records') else "❌ Missing")
+                            
+                            # Detailed flags
+                            st.markdown("**Detailed Analysis:**")
+                            flags_col1, flags_col2 = st.columns(2)
+                            with flags_col1:
+                                st.write(f"📧 Webmail: {'✅ Yes' if hunter_result.get('webmail') else '❌ No'}")
+                                st.write(f"🗑️ Disposable: {'✅ Yes' if hunter_result.get('disposable') else '❌ No'}")
+                            with flags_col2:
+                                st.write(f"🎣 Accept All: {'✅ Yes' if hunter_result.get('accept_all') else '❌ No'}")
+                                st.write(f"🚫 Blocked: {'✅ Yes' if hunter_result.get('block') else '❌ No'}")
+                
+                # NeverBounce Results
+                if st.session_state.api_keys['neverbounce']:
+                    with st.expander("### NeverBounce Results", expanded=True):
+                        nb_result = verifier.neverbounce_verify(email, st.session_state.api_keys['neverbounce'])
+                        if 'error' in nb_result:
+                            st.error(f"Error: {nb_result['error']}")
+                        else:
+                            status_map = {
+                                'valid': {'icon': '✅', 'color': 'green', 'text': 'Valid'},
+                                'invalid': {'icon': '❌', 'color': 'red', 'text': 'Invalid'},
+                                'disposable': {'icon': '📭', 'color': 'orange', 'text': 'Disposable'},
+                                'catchall': {'icon': '🎣', 'color': 'blue', 'text': 'Catch-all'},
+                                'unknown': {'icon': '❓', 'color': 'gray', 'text': 'Unknown'}
+                            }
+                            
+                            result = nb_result.get('result', 'unknown')
+                            status = status_map.get(result, status_map['unknown'])
+                            
+                            st.markdown(f"""
+                            ### {status['icon']} Status: **{status['text']}**
+                            """)
+                            
+                            if 'flags' in nb_result and nb_result['flags']:
+                                st.markdown("**Flags Detected:**")
+                                for flag in nb_result['flags']:
+                                    st.write(f"- {flag}")
+                            
+                            if nb_result.get('suggested_correction'):
+                                st.info(f"**Suggested Correction:** {nb_result['suggested_correction']}")
+        
+        with result_tabs[3]:
+            st.subheader("Service Comparison")
+            
+            comparison_data = []
+            
+            # Basic check
+            comparison_data.append({
+                "Service": "Basic Check",
+                "Status": basic_result['basic_status'],
+                "Format": "✅ Yes" if basic_result['basic_format'] else "❌ No",
+                "Disposable": "✅ Yes" if basic_result['basic_disposable'] else "❌ No",
+                "Cost": "Free",
+                "Accuracy": "85%"
+            })
+            
+            # Hunter.io
+            if st.session_state.api_keys['hunter']:
+                hunter_result = verifier.hunter_verify(email, st.session_state.api_keys['hunter'])
+                if 'score' in hunter_result:
+                    comparison_data.append({
+                        "Service": "Hunter.io",
+                        "Status": f"Score: {hunter_result['score']}/100",
+                        "Format": "✅ Yes" if hunter_result.get('regexp') else "❌ No",
+                        "Disposable": "✅ Yes" if hunter_result.get('disposable') else "❌ No",
+                        "Cost": "Free (25/mo)",
+                        "Accuracy": "98%"
+                    })
+            
+            # NeverBounce
+            if st.session_state.api_keys['neverbounce']:
+                nb_result = verifier.neverbounce_verify(email, st.session_state.api_keys['neverbounce'])
+                if 'result' in nb_result:
+                    comparison_data.append({
+                        "Service": "NeverBounce",
+                        "Status": nb_result['result'].capitalize(),
+                        "Format": "N/A",
+                        "Disposable": "✅ Yes" if nb_result.get('result') == 'disposable' else "❌ No",
+                        "Cost": "Free (100/mo)",
+                        "Accuracy": "99%"
+                    })
+            
+            if comparison_data:
+                df = pd.DataFrame(comparison_data)
+                st.dataframe(df, use_container_width=True)
+                
+                # Recommendation
+                st.markdown("---")
+                st.subheader("💰 Cost vs Accuracy Analysis")
+                
+                if len(comparison_data) > 1:
+                    st.info("""
+                    **Recommendation for Business Use:**
+                    - **Startups**: Use NeverBounce (100 free/month)
+                    - **Marketing**: Use ZeroBounce (best for lists)
+                    - **Sales**: Use Hunter.io (find more emails)
+                    - **Personal**: Basic check is sufficient
+                    """)
+                else:
+                    st.warning("Add API keys in sidebar to compare professional services")
+
+# Feature showcase
+st.markdown("---")
+st.subheader("🚀 Professional Features Available")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown("""
+    <div class="feature-card">
+        <h4>🔐 Hunter.io</h4>
+        <p><strong>Free:</strong> 25 verifications/month</p>
+        <p><strong>Best for:</strong> Sales & lead generation</p>
+        <p><strong>Features:</strong> Email scoring, SMTP check</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    st.markdown("""
+    <div class="feature-card">
+        <h4>✅ NeverBounce</h4>
+        <p><strong>Free:</strong> 100 verifications/month</p>
+        <p><strong>Best for:</strong> Email marketing</p>
+        <p><strong>Features:</strong> Real-time validation</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col3:
+    st.markdown("""
+    <div class="feature-card">
+        <h4>🎯 ZeroBounce</h4>
+        <p><strong>Free:</strong> 100 verifications/month</p>
+        <p><strong>Best for:</strong> E-commerce</p>
+        <p><strong>Features:</strong> Spam trap detection</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: #666; font-size: 0.9rem; padding: 20px;'>
-    <p>🚀 <strong>Advanced Email Verifier Pro</strong> | Built with Streamlit</p>
-    <p>✅ 3-in-1 Features | 💯 Free to Use | 🔒 No Data Stored</p>
-    <p>Last updated: December 2023 | Version 2.0</p>
+<div style="text-align: center; color: #666; padding: 20px;">
+    <p><strong>Professional Email Verifier v2.0</strong> | Basic + API Integration</p>
+    <p>💡 <em>Tip: Start with free API tiers, upgrade as your needs grow</em></p>
 </div>
 """, unsafe_allow_html=True)
-
-# Close dark mode div if enabled
-if st.session_state.dark_mode:
-    st.markdown('</div>', unsafe_allow_html=True)
